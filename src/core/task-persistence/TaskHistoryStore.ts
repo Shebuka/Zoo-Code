@@ -908,8 +908,15 @@ export class TaskHistoryStore {
 		}
 	}
 
+	/**
+	 * Return only the fields in `incoming` that differ from `cached`.
+	 */
+	private computeDelta(cached: HistoryItem, incoming: Partial<HistoryItem>): Partial<HistoryItem> {
+		return computeHistoryDelta(cached, incoming)
+	}
+
 	private buildDelta(id: string, cached: HistoryItem, incoming: Partial<HistoryItem>): Partial<HistoryItem> {
-		return { id, ...computeHistoryDelta(cached, incoming) }
+		return { id, ...this.computeDelta(cached, incoming) }
 	}
 
 	/**
@@ -947,9 +954,10 @@ export class TaskHistoryStore {
 				},
 			})
 			return written
+		} else {
+			await safeWriteJson(filePath, item)
+			return item
 		}
-		await safeWriteJson(filePath, item)
-		return item
 	}
 
 	private async reconcileTaskCache(taskId: string): Promise<void> {
@@ -1244,11 +1252,13 @@ export class TaskHistoryStore {
 			const firstFileLock =
 				suppliedFirstFileLock ??
 				(holdFirstFileLock ? await lockJsonFile(await this.getTaskFilePath(firstId)) : undefined)
+			const ownsFirstFileLock = Boolean(firstFileLock && !suppliedFirstFileLock)
 
 			try {
 				let firstDiskSnapshot!: TaskFilePreImage
+				const firstDiskGuard = options?.firstDiskGuard
 				const firstDelta = this.buildDelta(firstId, first, updatedFirst)
-				const writtenFirst = await this.writeTaskFile(mergedFirst, firstDelta, options?.firstDiskGuard, {
+				const writtenFirst = await this.writeTaskFile(mergedFirst, firstDelta, firstDiskGuard, {
 					heldLock: firstFileLock,
 					capturePreImage: (preImage) => (firstDiskSnapshot = preImage),
 				})
@@ -1265,13 +1275,11 @@ export class TaskHistoryStore {
 						const firstRestoration = [firstId, firstDiskSnapshot, expectedFirst, firstFileLock] as const
 						const restorations = Array.of<TaskFileRestoration>(firstRestoration)
 						if (secondDiskSnapshot) {
+							const mergeSecond = mergeWithDisk(secondDelta)
 							const secondPreImage = isValidTaskFilePreImage(secondDiskSnapshot)
 								? secondDiskSnapshot
 								: null
-							const expectedSecond = mergeWithDisk(secondDelta)(
-								secondPreImage,
-								mergedSecond,
-							) as HistoryItem
+							const expectedSecond = mergeSecond(secondPreImage, mergedSecond) as HistoryItem
 							const persistedSecond = JSON.parse(JSON.stringify(expectedSecond)) as HistoryItem
 							const expectedSecondStates = expectedTaskFileStates(persistedSecond, secondDiskSnapshot)
 							restorations.unshift([secondId, secondDiskSnapshot, expectedSecondStates])
@@ -1315,12 +1323,12 @@ export class TaskHistoryStore {
 						}
 					}
 
-					if (compensationErrors.length)
-						throw new AggregateError(Array.of(error, ...compensationErrors), "Pair compensation failed")
+					const callbackErrors = Array.of(error, ...compensationErrors)
+					if (compensationErrors.length) throw new AggregateError(callbackErrors, "Pair compensation failed")
 					throw error
 				}
 			} finally {
-				if (firstFileLock && !suppliedFirstFileLock) await firstFileLock()
+				if (ownsFirstFileLock) await firstFileLock!()
 			}
 		}
 		return options?.storeLockAcquired ? update() : this.withLock(update)
