@@ -94,7 +94,7 @@ describe("ClineProvider.removeClineFromStack()", () => {
 		await ClineProvider.prototype.removeClineFromStack.call(provider)
 
 		expect(task.abortTask).toHaveBeenCalledTimes(1)
-		expect(task.abortTask).toHaveBeenCalledWith(true)
+		expect(task.abortTask).toHaveBeenCalledWith(true, {})
 	})
 })
 

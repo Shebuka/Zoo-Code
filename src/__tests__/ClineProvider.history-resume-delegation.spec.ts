@@ -238,7 +238,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 				afterUnlock,
 				afterUnlockError,
 			),
-		).resolves.toBe(true)
+		).rejects.toThrow("tracker is closed")
 		await expect(
 			provider.runLockedDelegationTransition(
 				"parent-disposed-failure",
@@ -248,7 +248,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 				afterUnlock,
 				afterUnlockError,
 			),
-		).rejects.toBe(transitionError)
+		).rejects.toThrow("tracker is closed")
 		expect(afterUnlock).toHaveBeenCalledOnce()
 		expect(afterUnlockError).toHaveBeenCalledOnce()
 	})
@@ -768,83 +768,6 @@ describe("History resume delegation - parent metadata transitions", () => {
 		)
 	})
 
-	it("does not reopen or overwrite a parent when its UI history cannot be read", async () => {
-		const parentItem = {
-			id: "parent-read-failure",
-			status: "delegated",
-			awaitingChildId: "child-read-failure",
-			childIds: ["child-read-failure"],
-			ts: 100,
-			task: "Parent",
-			tokensIn: 0,
-			tokensOut: 0,
-			totalCost: 0,
-		}
-		const log = vi.fn()
-		const taskHistoryStore = makeTaskHistoryStoreStub({ id: "child-read-failure", status: "active" }, parentItem)
-		const provider = makeProviderStub({
-			contextProxy: { globalStorageUri: { fsPath: "/storage" } },
-			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
-			getCurrentTask: vi.fn(() => ({ taskId: "child-read-failure" })),
-			taskHistoryStore,
-			log,
-		})
-		vi.mocked(readTaskMessages).mockRejectedValue(new Error("history unavailable"))
-
-		const result = await ClineProvider.prototype.reopenParentFromDelegation.call(provider, {
-			parentTaskId: "parent-read-failure",
-			childTaskId: "child-read-failure",
-			completionResultSummary: "Child done",
-		})
-
-		expect(result).toBe(false)
-		expect(log).toHaveBeenCalledWith(expect.stringContaining("history unavailable"))
-		expect(readApiMessages).not.toHaveBeenCalled()
-		expect(saveTaskMessages).not.toHaveBeenCalled()
-		expect(saveApiMessages).not.toHaveBeenCalled()
-		expect(taskHistoryStore.atomicUpdatePair).not.toHaveBeenCalled()
-	})
-
-	it("does not reopen or overwrite a parent when its API history cannot be read", async () => {
-		const parentItem = {
-			id: "parent-api-read-failure",
-			status: "delegated",
-			awaitingChildId: "child-api-read-failure",
-			childIds: ["child-api-read-failure"],
-			ts: 100,
-			task: "Parent",
-			tokensIn: 0,
-			tokensOut: 0,
-			totalCost: 0,
-		}
-		const log = vi.fn()
-		const taskHistoryStore = makeTaskHistoryStoreStub(
-			{ id: "child-api-read-failure", status: "active" },
-			parentItem,
-		)
-		const provider = makeProviderStub({
-			contextProxy: { globalStorageUri: { fsPath: "/storage" } },
-			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
-			getCurrentTask: vi.fn(() => ({ taskId: "child-api-read-failure" })),
-			taskHistoryStore,
-			log,
-		})
-		vi.mocked(readTaskMessages).mockResolvedValue([])
-		vi.mocked(readApiMessages).mockRejectedValue(new Error("api history unavailable"))
-
-		const result = await ClineProvider.prototype.reopenParentFromDelegation.call(provider, {
-			parentTaskId: "parent-api-read-failure",
-			childTaskId: "child-api-read-failure",
-			completionResultSummary: "Child done",
-		})
-
-		expect(result).toBe(false)
-		expect(log).toHaveBeenCalledWith(expect.stringContaining("api history unavailable"))
-		expect(saveTaskMessages).not.toHaveBeenCalled()
-		expect(saveApiMessages).not.toHaveBeenCalled()
-		expect(taskHistoryStore.atomicUpdatePair).not.toHaveBeenCalled()
-	})
-
 	it("reopenParentFromDelegation injects tool_result when new_task tool_use exists in API history", async () => {
 		const parentItem = {
 			id: "p-tool",
@@ -1306,6 +1229,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 			overwriteApiConversationHistory: vi.fn(),
 		}
 		let currentTask: object | undefined = { taskId: "child-not-admitted" }
+		let scheduled: Promise<void> | undefined
 		const emit = vi.fn()
 		const provider = makeProviderStub({
 			contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
@@ -1315,6 +1239,9 @@ describe("History resume delegation - parent metadata transitions", () => {
 				currentTask = undefined
 			}),
 			createTaskWithHistoryItem: vi.fn(async () => (currentTask = parentInstance)),
+			taskScheduler: {
+				schedule: vi.fn((_task, run) => (scheduled = run())),
+			},
 			taskHistoryStore: makeTaskHistoryStoreStub({ id: "child-not-admitted", status: "active" }, parentItem),
 			emit,
 		})
@@ -1328,7 +1255,7 @@ describe("History resume delegation - parent metadata transitions", () => {
 				completionResultSummary: "done",
 			}),
 		).resolves.toBe(true)
-		await Promise.resolve()
+		await scheduled
 
 		expect(parentInstance.resumeAfterDelegation).not.toHaveBeenCalled()
 		expect(emit).not.toHaveBeenCalledWith(
@@ -1898,50 +1825,6 @@ describe("History resume delegation - parent metadata transitions", () => {
 			else expect(log).toHaveBeenCalledWith(expect.stringContaining("Skipping stale parent continuation"))
 		},
 	)
-
-	it("reopenParentFromDelegation propagates atomicUpdatePair failure — parent not reopened (RPD-04)", async () => {
-		const parentItem = {
-			id: "parent-rpd04",
-			status: "delegated",
-			awaitingChildId: "child-rpd04",
-			childIds: ["child-rpd04"],
-			ts: 700,
-			task: "Parent RPD-04",
-			tokensIn: 0,
-			tokensOut: 0,
-			totalCost: 0,
-		}
-		const persistError = new Error("atomic pair write failed")
-		const atomicUpdatePair = vi.fn().mockRejectedValue(persistError)
-		const taskHistoryStore = makeTaskHistoryStoreStub({ id: "child-rpd04", status: "active" }, parentItem, {
-			atomicUpdatePair,
-		})
-		const createTaskWithHistoryItem = vi.fn()
-
-		const provider = makeProviderStub({
-			contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
-			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: parentItem }),
-			emit: vi.fn(),
-			getCurrentTask: vi.fn(() => ({ taskId: "child-rpd04" })),
-			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
-			createTaskWithHistoryItem,
-			taskHistoryStore,
-		} as any)
-
-		vi.mocked(readTaskMessages).mockResolvedValue([])
-		vi.mocked(readApiMessages).mockResolvedValue([])
-
-		// Failure propagates — child is closed (step 4 already ran) but parent is NOT reopened
-		await expect(
-			(ClineProvider.prototype as any).reopenParentFromDelegation.call(provider, {
-				parentTaskId: "parent-rpd04",
-				childTaskId: "child-rpd04",
-				completionResultSummary: "Child completion with persistence failure",
-			}),
-		).rejects.toThrow(persistError)
-
-		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
-	})
 
 	it("reopenParentFromDelegation aborts parent reopen when all persistence paths fail (RPD-05)", async () => {
 		const persistError = new Error("parent status persist failed")

@@ -15,6 +15,11 @@ export class AsyncTaskTracker {
 		return task
 	}
 
+	trackIfActive<T>(callback: () => Promise<T>): Promise<T> {
+		if (!this.active) return Promise.reject(new Error("Async task tracker is closed"))
+		return this.track(callback())
+	}
+
 	runIfActive<T, Result>(callback: (value: T) => Promise<Result>, value: T): Promise<Result | undefined> {
 		return this.active ? callback(value) : Promise.resolve(undefined)
 	}

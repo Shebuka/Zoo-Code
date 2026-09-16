@@ -254,7 +254,9 @@ export class ClineProvider
 
 	private runDelegationTransition<T>(parentTaskId: string, fn: () => Promise<T>): Promise<T> {
 		const tracker = (this.runs ??= new AsyncTaskTracker())
-		return tracker.track(runDelegationTransition(ClineProvider.delegationTransitionLocks, parentTaskId, fn))
+		return tracker.trackIfActive(() =>
+			runDelegationTransition(ClineProvider.delegationTransitionLocks, parentTaskId, fn),
+		)
 	}
 
 	private runLockedDelegationTransition(
@@ -652,11 +654,7 @@ export class ClineProvider
 			try {
 				// Abort the running task and set isAbandoned to true so
 				// all running promises will exit as well.
-				if (options.saveMessages === false) {
-					await task.abortTask(true, options)
-				} else {
-					await task.abortTask(true)
-				}
+				await task.abortTask(true, options)
 			} catch (e) {
 				this.log(
 					`[ClineProvider#removeClineFromStack] abortTask() failed ${task.taskId}.${task.instanceId}: ${e.message}`,
@@ -1324,7 +1322,10 @@ export class ClineProvider
 							const hasActualSettings = !!fullProfile.apiProvider
 
 							if (hasActualSettings) {
-								await this.activateProviderProfile({ name: profile.name })
+								await this.activateProviderProfile(
+									{ name: profile.name },
+									{ persistTaskHistory: false },
+								)
 							} else {
 								// The task will continue with the current/default configuration.
 							}
@@ -4463,8 +4464,8 @@ export class ClineProvider
 					}
 					return { runPromise: parentInstance.resumeAfterDelegation() }
 				})
-				void this.taskScheduler
-					.schedule(parentInstance, async () => {
+				void this.runs!.track(
+					this.taskScheduler.schedule(parentInstance, async () => {
 						schedulerAdmitted = true
 						admitContinuation()
 						const { runPromise } = await continuation
@@ -4482,14 +4483,14 @@ export class ClineProvider
 							await vscode.window.showErrorMessage(`${message}. Open the task from history to retry.`)
 							throw error
 						}
-					})
-					.then(admitContinuation, (error) => {
-						admitContinuation()
-						console.error(
-							`[${ClineProvider.prototype.reopenParentFromDelegation.name}] taskScheduler.schedule failed:`,
-							error,
-						)
-					})
+					}),
+				).then(admitContinuation, (error) => {
+					admitContinuation()
+					console.error(
+						`[${ClineProvider.prototype.reopenParentFromDelegation.name}] taskScheduler.schedule failed:`,
+						error,
+					)
+				})
 			},
 			async (error) => {
 				if (!childToRestore) return
