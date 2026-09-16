@@ -251,20 +251,25 @@ describe("TerminalProcess", () => {
 			try {
 				mockTerminal.shellIntegration = undefined
 				let commandSubmitted: boolean | undefined
+				const completedSpy = vi.fn()
 				const runPromise = mockTerminalInfo.runCommand("test command", {
 					onLine: vi.fn(),
-					onCompleted: vi.fn(),
+					onCompleted: completedSpy,
 					onShellExecutionStarted: vi.fn(),
 					onShellExecutionComplete: vi.fn(),
 					onNoShellIntegration: (details) => {
 						commandSubmitted = details.commandSubmitted
 					},
 				})
+				const process = mockTerminalInfo.process
+				if (process) process.isHot = true
 
 				await vi.advanceTimersByTimeAsync(20)
 				await runPromise
 
 				expect(commandSubmitted).toBe(false)
+				expect(completedSpy).toHaveBeenCalledWith("<no shell integration>", process)
+				expect(process?.isHot).toBe(false)
 				expect(mockTerminal.sendText).not.toHaveBeenCalled()
 			} finally {
 				Terminal.setShellIntegrationTimeout(previousTimeout)
