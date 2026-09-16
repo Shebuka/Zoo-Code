@@ -46,6 +46,7 @@ describe("AsyncTaskTracker", () => {
 		const task = tracker.track(new Promise<void>((resolve) => (resolveTask = resolve)))
 		expect(tracker.isActive).toBe(true)
 		await expect(tracker.runIfActive(callback, "active")).resolves.toBe(6)
+		await expect(tracker.trackIfActive(async () => "tracked")).resolves.toBe("tracked")
 
 		let drained = false
 		const close = tracker.closeAndDrain().then(() => (drained = true))
