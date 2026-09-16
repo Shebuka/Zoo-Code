@@ -277,11 +277,12 @@ describe("TerminalProcess", () => {
 			const previousTimeout = Terminal.getShellIntegrationTimeout()
 			Terminal.setShellIntegrationTimeout(10)
 			mockTerminal.shellIntegration.executeCommand.mockReturnValue({})
+			const completedSpy = vi.fn()
 
 			try {
 				const commandPromise = mockTerminalInfo.runCommand("test command", {
 					onLine: vi.fn(),
-					onCompleted: vi.fn(),
+					onCompleted: completedSpy,
 					onShellExecutionStarted: vi.fn(),
 					onShellExecutionComplete: vi.fn(),
 				})
@@ -290,6 +291,10 @@ describe("TerminalProcess", () => {
 				await vi.advanceTimersByTimeAsync(10)
 				await commandPromise
 
+				expect(completedSpy).toHaveBeenCalledWith(
+					"<VSCE shell integration stream did not start: terminal output and command execution status is unknown>",
+					process,
+				)
 				expect(mockTerminalInfo.process).toBeUndefined()
 				expect(mockTerminalInfo["activeProcesses"]).not.toContain(process)
 				expect(process?.isHot).toBe(false)
@@ -302,6 +307,7 @@ describe("TerminalProcess", () => {
 		})
 
 		it("releases a command when its active stream throws", async () => {
+			vi.useFakeTimers()
 			const streamError = new Error("stream failed")
 			const stream: AsyncIterable<string> = {
 				[Symbol.asyncIterator]: () => ({ next: () => Promise.reject(streamError) }),
@@ -330,9 +336,11 @@ describe("TerminalProcess", () => {
 			expect(mockTerminalInfo.running).toBe(false)
 			expect(mockTerminalInfo["activeProcesses"]).not.toContain(process)
 			expect(process?.eventNames()).toEqual([])
+			expect(vi.getTimerCount()).toBe(0)
 
 			mockTerminalInfo.handleClose()
 			expect(completionSpy).not.toHaveBeenCalled()
+			vi.useRealTimers()
 		})
 
 		it("does not clear a newer process when a superseded active stream throws", async () => {

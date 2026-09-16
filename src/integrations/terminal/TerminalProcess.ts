@@ -49,8 +49,10 @@ export class TerminalProcess extends BaseTerminalProcess {
 
 		this.once("shell_execution_complete", () => this.terminal.releaseProcess(this))
 
-		this.once("no_shell_integration", () => {
-			this.completeBeforeExecution("<no shell integration>")
+		this.once("no_shell_integration", (details) => {
+			if (!details.commandSubmitted) {
+				this.completeBeforeExecution("<no shell integration>")
+			}
 		})
 	}
 
@@ -142,6 +144,7 @@ export class TerminalProcess extends BaseTerminalProcess {
 				message: "Command was submitted; output is not available, as shell integration is inactive.",
 				commandSubmitted: true,
 			})
+			this.completeBeforeExecution("<no shell integration>")
 			return
 		}
 
@@ -292,6 +295,7 @@ export class TerminalProcess extends BaseTerminalProcess {
 
 			// Emit continue event to allow execution to proceed
 			this.emit("continue")
+			this.handleError()
 			return
 		}
 
@@ -376,8 +380,7 @@ export class TerminalProcess extends BaseTerminalProcess {
 					)
 				}
 
-				const raceResult = await Promise.race(racers)
-				clearTimeout(idleTimer)
+				const raceResult = await Promise.race(racers).finally(() => clearTimeout(idleTimer))
 
 				if (raceResult === DONE_SENTINEL) {
 					// onDidEndTerminalShellExecution fired — the shell says we're done.
