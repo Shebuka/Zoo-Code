@@ -36,11 +36,10 @@ export type JsonFileLock = (() => Promise<void>) & {
 
 export async function lockJsonFile(filePath: string): Promise<JsonFileLock> {
 	const absoluteFilePath = path.resolve(filePath)
-	const dirPath = path.dirname(absoluteFilePath)
 	let compromisedError: Error | undefined
 
-	await fs.mkdir(dirPath, { recursive: true })
-	await fs.access(dirPath)
+	await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true })
+	await fs.access(path.dirname(absoluteFilePath))
 
 	const release = await lockfile.lock(absoluteFilePath, {
 		stale: LOCK_STALE_MS,

@@ -253,8 +253,7 @@ export class ClineProvider
 	private historyTaskCreationQueue = Promise.resolve()
 
 	private runDelegationTransition<T>(parentTaskId: string, fn: () => Promise<T>): Promise<T> {
-		const tracker = (this.runs ??= new AsyncTaskTracker())
-		return tracker.trackIfActive(() =>
+		return (this.runs ??= new AsyncTaskTracker()).trackIfActive(() =>
 			runDelegationTransition(ClineProvider.delegationTransitionLocks, parentTaskId, fn),
 		)
 	}
@@ -1319,9 +1318,7 @@ export class ClineProvider
 							// that only contain 'id' and 'name' fields. Activating such a profile would
 							// overwrite the CLI's working API configuration with empty settings.
 							const fullProfile = await this.providerSettingsManager.getProfile({ name: profile.name })
-							const hasActualSettings = !!fullProfile.apiProvider
-
-							if (hasActualSettings) {
+							if (fullProfile.apiProvider) {
 								await this.activateProviderProfile(
 									{ name: profile.name },
 									{ persistTaskHistory: false },
