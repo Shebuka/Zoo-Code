@@ -4137,6 +4137,11 @@ export class ClineProvider
 			parent?.awaitingChildId === childTaskId && (parent.status === "delegated" || parent.status === "active")
 		const transition = async (firstFileLock: JsonFileLock) => {
 			const globalStoragePath = this.contextProxy.globalStorageUri.fsPath
+			const parentStorage = { taskId: parentTaskId, globalStoragePath }
+			const saveParentTaskMessages = (messages: ClineMessage[], merge: boolean) =>
+				saveTaskMessages({ messages, ...parentStorage, merge })
+			const saveParentApiMessages = (messages: ApiMessage[], merge: boolean) =>
+				saveApiMessages({ messages, ...parentStorage, merge })
 
 			// 1) Load parent from history and current persisted messages
 			const refreshedParent = this.taskHistoryStore.get(parentTaskId)
@@ -4292,9 +4297,7 @@ export class ClineProvider
 				}
 			}
 
-			let updatedHistory!: HistoryItem
-			let completingParent!: HistoryItem
-			let completingChild!: HistoryItem
+			let updatedHistory!: HistoryItem, completingParent!: HistoryItem, completingChild!: HistoryItem
 			const staleDelegationError = new Error("stale cross-instance delegation")
 			const assertCurrentDelegation = (parent: HistoryItem) => {
 				if (!isCurrentDelegation(parent)) throw staleDelegationError
@@ -4306,18 +4309,8 @@ export class ClineProvider
 				storeLockAcquired: true,
 				whileFirstFileLocked: async () => {
 					try {
-						parentClineMessages = await saveTaskMessages({
-							messages: parentClineMessages,
-							taskId: parentTaskId,
-							globalStoragePath,
-							merge: true,
-						})
-						parentApiMessages = await saveApiMessages({
-							messages: parentApiMessages,
-							taskId: parentTaskId,
-							globalStoragePath,
-							merge: true,
-						})
+						parentClineMessages = await saveParentTaskMessages(parentClineMessages, true)
+						parentApiMessages = await saveParentApiMessages(parentApiMessages, true)
 
 						const current = this.getCurrentTask()
 						if (current && current.taskId !== childTaskId) return
@@ -4341,18 +4334,8 @@ export class ClineProvider
 						}
 					} catch (error) {
 						const restorationResults = await Promise.allSettled([
-							saveTaskMessages({
-								messages: originalParentClineMessages,
-								taskId: parentTaskId,
-								globalStoragePath,
-								merge: false,
-							}),
-							saveApiMessages({
-								messages: originalParentApiMessages,
-								taskId: parentTaskId,
-								globalStoragePath,
-								merge: false,
-							}),
+							saveParentTaskMessages(originalParentClineMessages, false),
+							saveParentApiMessages(originalParentApiMessages, false),
 						])
 						const restorationErrors = restorationResults.flatMap((result) =>
 							result.status === "rejected" ? [result.reason] : [],
