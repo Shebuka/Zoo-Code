@@ -1319,9 +1319,7 @@ export class ClineProvider
 							// that only contain 'id' and 'name' fields. Activating such a profile would
 							// overwrite the CLI's working API configuration with empty settings.
 							const fullProfile = await this.providerSettingsManager.getProfile({ name: profile.name })
-							const hasActualSettings = !!fullProfile.apiProvider
-
-							if (hasActualSettings) {
+							if (fullProfile.apiProvider) {
 								await this.activateProviderProfile(
 									{ name: profile.name },
 									{ persistTaskHistory: false },
@@ -3880,8 +3878,9 @@ export class ClineProvider
 		mode: string
 		pendingActionId?: string
 	}): Promise<Task> {
-		const start = () => ClineProvider.prototype.delegateParentAndOpenChildUnlocked.call(this, params)
-		return ClineProvider.prototype.runDelegationTransition.call(this, params.parentTaskId, start) as Promise<Task>
+		return ClineProvider.prototype.runDelegationTransition.call(this, params.parentTaskId, () =>
+			ClineProvider.prototype.delegateParentAndOpenChildUnlocked.call(this, params),
+		) as Promise<Task>
 	}
 
 	private async delegateParentAndOpenChildUnlocked(params: {
