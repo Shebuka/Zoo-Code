@@ -13,7 +13,7 @@ Completing one block does not close its `LIFE-GAP` unless the parent GAP closure
 
 ## Ownership rules
 
-- Every `LIFE-GAP-001` through `LIFE-GAP-041` has exactly one primary block below.
+- Every `LIFE-GAP-001` through `LIFE-GAP-040` has exactly one primary block below.
 - A block owns exactly one GAP ID. Dependencies may reference other blocks but do not duplicate ownership.
 - Block IDs are stable: `LIFE-BLK-P<workstream>-<gap number>`.
 - Baseline blocks describe current serial production behavior. Optional fan-out is isolated under `FANOUT-BLK-*` and does not own a baseline `LIFE-GAP`.
@@ -43,12 +43,11 @@ Completing one block does not close its `LIFE-GAP` unless the parent GAP closure
 
 ## P3: Schema, path, and vocabulary
 
-| Block           | GAP | 1-SP increment                                                                                       | Production/model/test mapping                                                                                                                                            | Depends on | Acceptance                                                                                                                                                            |
-| --------------- | --- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LIFE-BLK-P3-013 | 013 | Publish the canonical persisted-status owner and copied-union inventory.                             | `historyItemSchema`, task metadata, Task, CLI/history reader; typecheck/tests.                                                                                           | None       | Every copy is listed with replacement/static-ratchet criteria.                                                                                                        |
-| LIFE-BLK-P3-018 | 018 | Define normal-read validation and quarantine outcomes for malformed history.                         | `readTaskFile`, reconciliation, shared Zod schema; fixtures.                                                                                                             | None       | Missing/invalid/legacy records have distinct expected outcomes and test fixtures.                                                                                     |
-| LIFE-BLK-P3-019 | 019 | Inventory every task-ID-to-path entry and one shared safe-ID contract.                               | store paths, imports, deletion, checkpoints; traversal tests.                                                                                                            | P3-018     | All path constructors are mapped and separator/traversal acceptance tests are specified.                                                                              |
-| LIFE-BLK-P3-041 | 041 | Specify cycle-safe, duplicate-safe traversal for cascade deletion over unvalidated persisted graphs. | `ClineProvider.deleteTaskWithId` `collectChildIds`, `TaskHistoryStore.deleteMany`; package-local traversal fixtures with cyclic, self-referencing, and duplicate graphs. | P3-018     | Traversal terminates on malformed graphs; deletion removes the acyclic closure exactly once or fails closed with a surfaced error; fixture tests prove both outcomes. |
+| Block           | GAP | 1-SP increment                                                               | Production/model/test mapping                                                  | Depends on | Acceptance                                                                               |
+| --------------- | --- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------- |
+| LIFE-BLK-P3-013 | 013 | Publish the canonical persisted-status owner and copied-union inventory.     | `historyItemSchema`, task metadata, Task, CLI/history reader; typecheck/tests. | None       | Every copy is listed with replacement/static-ratchet criteria.                           |
+| LIFE-BLK-P3-018 | 018 | Define normal-read validation and quarantine outcomes for malformed history. | `readTaskFile`, reconciliation, shared Zod schema; fixtures.                   | None       | Missing/invalid/legacy records have distinct expected outcomes and test fixtures.        |
+| LIFE-BLK-P3-019 | 019 | Inventory every task-ID-to-path entry and one shared safe-ID contract.       | store paths, imports, deletion, checkpoints; traversal tests.                  | P3-018     | All path constructors are mapped and separator/traversal acceptance tests are specified. |
 
 ## P4: Request, stream, and tool identity
 
@@ -111,7 +110,7 @@ Optional future fan-out blocks do not own `LIFE-GAP-014` and do not participate 
 
 ## Mechanical coverage check
 
-The primary tables above map the closed integer range `001..041` exactly once. Reviewers should verify this mechanically before changing the register:
+The primary tables above map the closed integer range `001..040` exactly once. Reviewers should verify this mechanically before changing the register:
 
 ```sh
 rg -o '^\| LIFE-BLK-P[0-9]-[0-9]{3} \|' docs/architecture/task-lifecycle-remediation-blocks.md \
@@ -124,26 +123,8 @@ The command must print nothing. It matches only primary table rows, so dependenc
 Separately compare block suffixes with the GAP column to detect omissions or mismatches:
 
 ```sh
-node -e 'const fs=require("fs");const s=fs.readFileSync("docs/architecture/task-lifecycle-remediation-blocks.md","utf8");const rows=[...s.matchAll(/^\| LIFE-BLK-P\d-(\d{3}) \| (\d{3}) \|/gm)];const gaps=rows.map(r=>r[2]);const want=Array.from({length:41},(_,i)=>String(i+1).padStart(3,"0"));if(rows.length!==41||rows.some(r=>r[1]!==r[2])||want.some(id=>!gaps.includes(id)))process.exit(1)'
+node -e 'const fs=require("fs");const s=fs.readFileSync("docs/architecture/task-lifecycle-remediation-blocks.md","utf8");const rows=[...s.matchAll(/^\| LIFE-BLK-P\d-(\d{3}) \| (\d{3}) \|/gm)];const gaps=rows.map(r=>r[2]);const want=Array.from({length:40},(_,i)=>String(i+1).padStart(3,"0"));if(rows.length!==40||rows.some(r=>r[1]!==r[2])||want.some(id=>!gaps.includes(id)))process.exit(1)'
 ```
-
-## Issue-update plan for #1688 and child issues
-
-The next documentation subtask applies this mapping to [#1688](https://github.com/Zoo-Code-Org/Zoo-Code/issues/1688) and its children. GitHub issue numbers are tracking links only; `LIFE-GAP-*` IDs own the burn-down.
-
-| Finding                                      | GAP IDs         | Issue to update | Update                                                                                      |
-| -------------------------------------------- | --------------- | --------------- | ------------------------------------------------------------------------------------------- |
-| Inventory-versus-composed scope statement    | register-wide   | #1688           | Replace the 001..038 range with 001..041 in the umbrella body and link the scope statement. |
-| #1714 settlement model evidence              | context for 039 | #1688, #1690    | Record the settlement reducer, witnesses, and focused tests as current evidence.            |
-| Crash-safe rejection settlement              | 039             | #1690           | Add LIFE-GAP-039 to the P2 child checklist.                                                 |
-| Startup repair pending-action reconciliation | 040             | #1690           | Add LIFE-GAP-040 to the P2 child checklist.                                                 |
-| Cycle-safe cascade deletion traversal        | 041             | #1691           | Add LIFE-GAP-041 to the P3 child checklist.                                                 |
-| Strengthened completion commit obligations   | 006             | #1690           | Append the composed phase-table and pending-action obligations to the child's 006 item.     |
-| Strengthened generation obligations          | 012             | #1689           | Append pending-action replay and attempt identity to the child's 012 item.                  |
-| Strengthened convergence obligations         | 020             | #1689           | Append the pending-action convergence rule to the child's 020 item.                         |
-| Strengthened queue durability contract       | 031             | #1693           | Append the restart-composition obligation to the child's 031 item.                          |
-| Strengthened approval correlation            | 036             | #1693           | Append staged-action correlation and durable denial settlement to the child's 036 item.     |
-| Strengthened call identity                   | 038             | #1692           | Append the staged-action bijection obligation to the child's 038 item.                      |
 
 ## Block completion template
 

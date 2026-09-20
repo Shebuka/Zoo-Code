@@ -18,6 +18,7 @@ interface Transition {
 	name: string
 	next: ModelState
 	delegation?: { parentId: TaskId }
+	completion?: { childId: TaskId }
 	settlement?: { taskId: TaskId; actionId: string }
 }
 
@@ -58,6 +59,15 @@ const semanticWitnesses = {
 		prev[transition.delegation.parentId]?.status === "active" &&
 		prev[transition.delegation.parentId]?.pendingAction?.kind === "create_subtask" &&
 		next[transition.delegation.parentId]?.pendingAction === undefined,
+	"completion-preserves-unrelated-pending-action": ({ prev, next, transition }: WitnessContext) => {
+		if (transition.completion === undefined) return false
+		const beforeAction = prev[transition.completion.childId]?.pendingAction
+		return (
+			beforeAction !== undefined &&
+			next[transition.completion.childId]?.status === "completed" &&
+			canonicalTask(next[transition.completion.childId]?.pendingAction) === canonicalTask(beforeAction)
+		)
+	},
 	"stale-settlement-rejected": ({ prev, next, transition }: WitnessContext) => {
 		if (transition.settlement === undefined) return false
 		const beforeAction = prev[transition.settlement.taskId]?.pendingAction
@@ -165,7 +175,8 @@ function transitions(state: ModelState): Transition[] {
 			const completed = completeDelegatedChild(parent, child, `${childId} result`)
 			result.push({
 				name: `complete(${childId})`,
-				next: replace(state, completed.parent, { ...completed.child, pendingAction: undefined }),
+				next: replace(state, completed.parent, completed.child),
+				completion: { childId },
 			})
 		}
 

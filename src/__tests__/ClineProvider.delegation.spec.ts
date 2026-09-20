@@ -789,7 +789,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			getCurrentTask,
 			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
 			createTask,
-			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: current }),
+			getTaskWithId: vi.fn().mockImplementation(async () => ({ historyItem: current })),
 			handleModeSwitch: vi.fn().mockResolvedValue(undefined),
 			deleteTaskWithId: vi.fn().mockResolvedValue(undefined),
 			createTaskWithHistoryItem: vi.fn().mockResolvedValue(undefined),
@@ -811,6 +811,71 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 		expect(current.pendingAction).toBeUndefined()
 		expect(current.status).toBe("interrupted")
 		expect(provider.deleteTaskWithId).toHaveBeenCalledWith("child-1", false)
+		expect(provider.createTaskWithHistoryItem).toHaveBeenCalledWith(
+			expect.objectContaining({
+				status: "interrupted",
+				pendingAction: undefined,
+			}),
+		)
+	})
+
+	it("does not settle a pending action after an unrelated persistence failure", async () => {
+		const persistenceError = new Error("parent persistence failed")
+		const pendingAction = {
+			kind: "create_subtask" as const,
+			actionId: "create-action",
+			approvalText: "{}",
+			mode: "code",
+			message: "Do something",
+			todos: [],
+		}
+		const interruptedParent: HistoryItem = {
+			...parentHistoryItem,
+			status: "interrupted",
+			pendingAction,
+		}
+		const parentTask = makeParentTask()
+		const child = { taskId: "child-1", run: vi.fn().mockResolvedValue(undefined) }
+		const getCurrentTask = vi.fn().mockReturnValue(parentTask)
+		const createTask = vi.fn(async () => {
+			getCurrentTask.mockReturnValue(child)
+			return child
+		})
+		const atomicReadAndUpdate = vi.fn().mockRejectedValue(persistenceError)
+		const createTaskWithHistoryItem = vi.fn().mockResolvedValue(undefined)
+		const provider = {
+			taskScheduler: new TaskScheduler(),
+			emit: vi.fn(),
+			getCurrentTask,
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask,
+			getTaskWithId: vi.fn().mockResolvedValue({ historyItem: interruptedParent }),
+			handleModeSwitch: vi.fn().mockResolvedValue(undefined),
+			deleteTaskWithId: vi.fn().mockResolvedValue(undefined),
+			createTaskWithHistoryItem,
+			log: vi.fn(),
+			isViewLaunched: false,
+			taskHistoryStore: {
+				invalidate: vi.fn().mockResolvedValue(undefined),
+				get: vi.fn(() => interruptedParent),
+				atomicReadAndUpdate,
+			},
+		} as unknown as ClineProvider
+
+		await expect(
+			ClineProvider.prototype.delegateParentAndOpenChild.call(provider, {
+				parentTaskId: "parent-1",
+				message: pendingAction.message,
+				initialTodos: pendingAction.todos,
+				mode: pendingAction.mode,
+				pendingActionId: pendingAction.actionId,
+			}),
+		).rejects.toThrow(persistenceError)
+
+		expect(atomicReadAndUpdate).toHaveBeenCalledTimes(1)
+		expect(interruptedParent.pendingAction).toBe(pendingAction)
+		expect(provider.deleteTaskWithId).toHaveBeenCalledWith("child-1", false)
+		expect(createTaskWithHistoryItem).toHaveBeenCalledWith(interruptedParent)
 	})
 
 	it("does not restore a rejected pending action when its settlement write fails", async () => {
