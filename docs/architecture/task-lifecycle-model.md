@@ -41,20 +41,20 @@ TLA+/PlusCal or Quint with TLC becomes a better fit when the lifecycle needs tem
 
 ## Production mapping
 
-| Model concept             | Production concept                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------ |
-| Task record and status    | `HistoryItem` persisted by `TaskHistoryStore`                                        |
-| `delegate(parent, child)` | `ClineProvider.delegateParentAndOpenChild`                                           |
-| `interrupt(child)`        | cancellation or eviction through `markDelegatedChildInterrupted`                     |
-| `complete(child)`         | `ClineProvider.reopenParentFromDelegation`                                           |
-| `abandon(child)`          | `ClineProvider.abandonSubtask`                                                       |
-| Pending-action settlement | `settleRejectedCreateSubtaskAction` inside the delegation update path (#1714)        |
-| Atomic event step         | `atomicReadAndUpdate`, `atomicUpdatePair`, and per-parent delegation transition lock |
-| Event interleaving        | Competing completion, cancellation, abandonment, and new delegation calls            |
+| Model concept             | Production concept                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Task record and status    | `HistoryItem` persisted by `TaskHistoryStore`                                                                        |
+| `delegate(parent, child)` | `ClineProvider.delegateParentAndOpenChild`                                                                           |
+| `interrupt(child)`        | cancellation or eviction through `markDelegatedChildInterrupted`                                                     |
+| `complete(child)`         | `ClineProvider.reopenParentFromDelegation`                                                                           |
+| `abandon(child)`          | `ClineProvider.abandonSubtask`                                                                                       |
+| Pending-action settlement | `TaskHistoryStore.clearPendingActionIfMatching` compare-and-clear in the rejected-delegation settlement path (#1714) |
+| Atomic event step         | `atomicReadAndUpdate`, `atomicUpdatePair`, and per-parent delegation transition lock                                 |
+| Event interleaving        | Competing completion, cancellation, abandonment, and new delegation calls                                            |
 
 The model has three fixed task slots, enough to cover competing siblings and a nested parent-child-grandchild chain. It explores every reachable interleaving through depth 12, deduplicating canonical states. Representative checks also exercise rejected operations that do not create a new state: a second concurrent delegation while the first child is active, stale completion after re-delegation, late completion after abandonment, completion after interruption, and nested completion. Named semantic landmarks require the graph to retain interrupted-child re-delegation and nested delegation even when the raw state total changes.
 
-Each task slot can also hold one of two pending `create_subtask` actions. A `stage` action mirrors `setPendingTaskAction` overwrite semantics, delegation clears the action its request carried, completion preserves unrelated actions, and a `settle-rejected` action models the settlement that follows an authoritative delegation rejection (#1714). Production settles through the typed `LifecycleTransitionError` from the shared guards: the provider writes the settled record with one extra `atomicReadAndUpdate` call, then propagates the original rejection. Four named witnesses must remain reachable: settlement from an interrupted record after rejection, settlement through a successful active delegation, unrelated-action preservation during completion, and stale-action protection where a settlement targeting one action ID leaves a replacement action intact. A mismatched pending-action request keeps its production behavior: the atomic update throws before any transition, and no settlement runs.
+Each task slot can also hold one of two pending `create_subtask` actions. A `stage` action mirrors `setPendingTaskAction` overwrite semantics, delegation clears the action its request carried, completion clears the child's action only when its event carries the matching action ID, and a `settle-rejected` action models the settlement that follows an authoritative delegation rejection (#1714). Production settles through the typed `LifecycleTransitionError` from the shared guards: the provider calls the disk-authoritative `TaskHistoryStore.clearPendingActionIfMatching` compare-and-clear under the per-file lock, then propagates the original rejection. Six named witnesses must remain reachable: settlement from an interrupted record after rejection, settlement through a successful active delegation, unrelated-action preservation during completion, stale-action protection where a settlement targeting one action ID leaves a replacement action intact, matching-ID completion clearing, and replacement-ID completion preservation. A mismatched pending-action request keeps its production behavior: the atomic update throws before any transition, and no settlement runs.
 
 Production completion also accepts a recovery-compatible `active` parent that still awaits the returning child, then clears the stale pointers. Normal model transitions never create that intermediate state, so it is covered by a focused reducer test rather than admitted as a generally valid reachable state.
 
@@ -66,6 +66,7 @@ The same `pnpm lifecycle:model-check` command also runs a second bounded explore
 - store read/update operations hold the host mutex, while live-task snapshots used by completion and message saves may outlive it;
 - a write delta is computed relative to that host's cache;
 - revalidation under the per-file disk lock checks only status-transition legality;
+- the rejected-delegation settlement compare-and-clear decides inside the disk merge callback, so a replacement action persisted by another host is never cleared;
 - fields absent from the delta preserve the current disk value, `childIds` are unioned, and other same-field conflicts are last-writer-wins;
 - `atomicUpdatePair` commits its files in order, with another host able to act between file commits;
 - successful pair-operation cache entries publish together after both file writes; if the second write fails, the cache publishes only the first committed record;
@@ -82,7 +83,7 @@ CI fails if either exact causal witness or violation class changes, a witness di
 
 The known-unsafe witnesses currently compare exact shortest action sequences. This is intentionally simple and reviewable, but brittle to harmless action renames or serialization refactors. A causal partial-order comparator would reduce that brittleness but would add a second trace-equivalence protocol to maintain. Until that complexity is justified, update an exact witness only after confirming the terminal violation class and required causal ordering are unchanged.
 
-`TaskHistoryStore.realConcurrency.spec.ts` complements the abstract interleavings with one synchronized integration smoke check through the real `proper-lockfile` and filesystem rename path; broader VS Code E2E remains reserved for restart and extension-host behavior.
+`TaskHistoryStore.realConcurrency.spec.ts` complements the abstract interleavings with real-filesystem checks through the real `proper-lockfile` and filesystem rename path, including the stale-settlement compare-and-clear regression; broader VS Code E2E remains reserved for restart and extension-host behavior.
 
 ## Task cleanup protocol model
 
@@ -137,7 +138,8 @@ The task delegation checker currently enforces:
 5. Parent-child lineage is acyclic.
 6. Completed task records cannot be changed by later lifecycle events.
 7. Active-child re-delegation, stale completion after ownership moves to another child, duplicate/late completion, and abandonment of a live child are rejected by the shared production guards.
-8. A rejected delegation settles only the exact matching pending `create_subtask` action. Settlement preserves status, lineage, and accounting, never clears a replacement or different-kind action, and never mutates a completed record.
+8. A rejected delegation settles only the exact matching pending `create_subtask` action. Settlement preserves status, lineage, and accounting, never clears a replacement or different-kind action, and never mutates a completed record. The settlement compare-and-clear reads the persisted record under the per-file lock, so it never clears from a stale host cache.
+9. A completion clears the completing child's pending action only when the completion event carries the exact matching action ID. A completion with no action ID or a different ID preserves the pending action.
 
 The completion persistence checker additionally enforces:
 

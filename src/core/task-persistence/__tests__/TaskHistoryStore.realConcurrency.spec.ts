@@ -72,7 +72,146 @@ function item(id: string): HistoryItem {
 	}
 }
 
+function createAction(actionId: string, message: string) {
+	return {
+		kind: "create_subtask" as const,
+		actionId,
+		approvalText: "{}",
+		mode: "code",
+		message,
+		todos: [],
+	}
+}
+
 describe("TaskHistoryStore real cross-host locking", () => {
+	it("preserves a replacement pending action when a stale store settles the prior action", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-stale-settlement-"))
+		const storeA = new TaskHistoryStore(storagePath)
+		const storeB = new TaskHistoryStore(storagePath)
+		const actionA = {
+			kind: "create_subtask" as const,
+			actionId: "action-a",
+			approvalText: "{}",
+			mode: "code",
+			message: "action A",
+			todos: [],
+		}
+		const actionB = { ...actionA, actionId: "action-b", message: "action B" }
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert({ ...item("shared-task"), pendingAction: actionA })
+			await storeB.initialize()
+
+			await storeB.atomicReadAndUpdate("shared-task", (current) => ({ ...current, pendingAction: actionB }))
+			expect(storeA.get("shared-task")?.pendingAction).toEqual(actionA)
+
+			const authoritative = await storeA.clearPendingActionIfMatching("shared-task", actionA.actionId)
+			expect(authoritative.pendingAction).toEqual(actionB)
+			expect(storeA.get("shared-task")?.pendingAction).toEqual(actionB)
+			await storeB.invalidate("shared-task")
+
+			expect(storeB.get("shared-task")?.pendingAction).toEqual(actionB)
+		} finally {
+			storeA.dispose()
+			storeB.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
+	it("clears a matching create_subtask action from disk and refreshes the cache", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-compare-clear-"))
+		const storeA = new TaskHistoryStore(storagePath)
+		const storeB = new TaskHistoryStore(storagePath)
+		const actionA = createAction("action-a", "action A")
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert({ ...item("shared-task"), pendingAction: actionA })
+			await storeB.initialize()
+
+			const authoritative = await storeA.clearPendingActionIfMatching("shared-task", actionA.actionId)
+
+			expect(authoritative.pendingAction).toBeUndefined()
+			expect(storeA.get("shared-task")?.pendingAction).toBeUndefined()
+			await storeB.invalidate("shared-task")
+			expect(storeB.get("shared-task")?.pendingAction).toBeUndefined()
+			expect(storeB.get("shared-task")).toMatchObject({ id: "shared-task", status: "active" })
+		} finally {
+			storeA.dispose()
+			storeB.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
+	it("clears a matching action from disk even when the calling store cache is stale", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-disk-compare-clear-"))
+		const storeA = new TaskHistoryStore(storagePath)
+		const storeB = new TaskHistoryStore(storagePath)
+		const actionA = createAction("action-a", "action A")
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert(item("shared-task"))
+			await storeB.initialize()
+
+			await storeB.atomicReadAndUpdate("shared-task", (current) => ({ ...current, pendingAction: actionA }))
+
+			const authoritative = await storeA.clearPendingActionIfMatching("shared-task", actionA.actionId)
+
+			expect(authoritative.pendingAction).toBeUndefined()
+			await storeB.invalidate("shared-task")
+			expect(storeB.get("shared-task")?.pendingAction).toBeUndefined()
+		} finally {
+			storeA.dispose()
+			storeB.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
+	it("preserves a different-kind pending action with the same action ID", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-different-kind-"))
+		const storeA = new TaskHistoryStore(storagePath)
+		const finishAction = {
+			kind: "finish_subtask" as const,
+			actionId: "action-a",
+			approvalText: "{}",
+			parentTaskId: "parent-1",
+			result: "done",
+		}
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert({ ...item("shared-task"), pendingAction: finishAction })
+
+			const authoritative = await storeA.clearPendingActionIfMatching("shared-task", finishAction.actionId)
+
+			expect(authoritative.pendingAction).toEqual(finishAction)
+			expect(storeA.get("shared-task")?.pendingAction).toEqual(finishAction)
+		} finally {
+			storeA.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
+	it("preserves the record when no pending action is persisted", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-no-action-"))
+		const storeA = new TaskHistoryStore(storagePath)
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert(item("shared-task"))
+
+			const authoritative = await storeA.clearPendingActionIfMatching("shared-task", "action-a")
+
+			expect(authoritative.pendingAction).toBeUndefined()
+			expect(authoritative).toMatchObject({ id: "shared-task", status: "active" })
+		} finally {
+			storeA.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
 	it("preserves independent stale-cache deltas through the real per-file lock", async () => {
 		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-real-lock-"))
 		const storeA = new TaskHistoryStore(storagePath)

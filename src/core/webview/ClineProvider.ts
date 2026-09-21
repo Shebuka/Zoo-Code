@@ -127,7 +127,6 @@ import {
 	delegateTaskToChild,
 	interruptDelegatedChild,
 	LifecycleTransitionError,
-	settleRejectedCreateSubtaskAction,
 } from "../task-persistence"
 import { readTaskMessages } from "../task-persistence/taskMessages"
 import { getNonce } from "./getNonce"
@@ -4047,14 +4046,14 @@ export class ClineProvider
 				}`,
 			)
 			// The authoritative parent record rejected this delegation (#1714).
-			// Settle the matching pending create_subtask action durably so a retry
-			// cannot replay a rejected action, then propagate the original error.
+			// Settle the matching pending create_subtask action durably through
+			// the disk-authoritative compare-and-clear so a retry cannot replay
+			// a rejected action and a replacement action from another host is
+			// never cleared, then propagate the original error.
 			let settlementFailed = false
 			if (pendingActionId && err instanceof LifecycleTransitionError) {
 				try {
-					await this.taskHistoryStore.atomicReadAndUpdate(parentTaskId, (historyItem) =>
-						settleRejectedCreateSubtaskAction(historyItem, pendingActionId),
-					)
+					await this.taskHistoryStore.clearPendingActionIfMatching(parentTaskId, pendingActionId)
 					this.recentTasksCache = undefined
 				} catch (settlementError) {
 					settlementFailed = true

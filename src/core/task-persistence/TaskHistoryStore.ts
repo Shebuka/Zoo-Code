@@ -1060,6 +1060,47 @@ export class TaskHistoryStore {
 		})
 	}
 
+	/**
+	 * Disk-authoritative compare-and-clear for a rejected `create_subtask`
+	 * pending action (#1714). The comparison runs inside the per-file
+	 * advisory lock's merge callback, so the decision reads the persisted
+	 * record rather than this store's possibly stale cache. A missing,
+	 * different-kind, or replacement pending action is preserved unchanged.
+	 * The authoritative record is written back, the store cache is refreshed
+	 * with it, and it is returned to the caller.
+	 *
+	 * @throws If the task ID is not present in the cache.
+	 */
+	public async clearPendingActionIfMatching(taskId: string, expectedActionId: string): Promise<HistoryItem> {
+		return this.withLock(async () => {
+			const cached = this.cache.get(taskId)
+			if (!cached) {
+				throw new Error(`[TaskHistoryStore] clearPendingActionIfMatching: task ${taskId} not found in cache`)
+			}
+			const filePath = await this.getTaskFilePath(taskId)
+			let authoritative: HistoryItem = cached
+			await safeWriteJson(filePath, cached, {
+				merge: (existing, incoming) => {
+					const disk =
+						existing && typeof existing === "object" && "id" in existing
+							? (existing as HistoryItem)
+							: (incoming as HistoryItem)
+					const pendingAction = disk.pendingAction
+					authoritative =
+						pendingAction?.kind === "create_subtask" && pendingAction.actionId === expectedActionId
+							? { ...disk, pendingAction: undefined }
+							: disk
+					return authoritative
+				},
+			})
+			this.cache.set(taskId, authoritative)
+			if (this.onWrite) {
+				await this.onWrite(this.getAll())
+			}
+			return authoritative
+		})
+	}
+
 	// ────────────────────────────── Private: Write lock ──────────────────────────────
 
 	/**

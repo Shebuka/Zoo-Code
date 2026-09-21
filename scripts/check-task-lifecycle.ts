@@ -18,7 +18,7 @@ interface Transition {
 	name: string
 	next: ModelState
 	delegation?: { parentId: TaskId }
-	completion?: { childId: TaskId }
+	completion?: { childId: TaskId; pendingActionId?: string }
 	settlement?: { taskId: TaskId; actionId: string }
 }
 
@@ -75,6 +75,28 @@ const semanticWitnesses = {
 			beforeAction?.kind === "create_subtask" &&
 			beforeAction.actionId !== transition.settlement.actionId &&
 			next[transition.settlement.taskId]?.pendingAction?.actionId === beforeAction.actionId
+		)
+	},
+	"matching-completion-clears-pending-action": ({ prev, next, transition }: WitnessContext) => {
+		if (transition.completion?.pendingActionId === undefined) return false
+		const beforeAction = prev[transition.completion.childId]?.pendingAction
+		const after = next[transition.completion.childId]
+		return (
+			beforeAction?.kind === "create_subtask" &&
+			beforeAction.actionId === transition.completion.pendingActionId &&
+			after?.status === "completed" &&
+			after.pendingAction === undefined
+		)
+	},
+	"replacement-completion-preserves-pending-action": ({ prev, next, transition }: WitnessContext) => {
+		if (transition.completion?.pendingActionId === undefined) return false
+		const beforeAction = prev[transition.completion.childId]?.pendingAction
+		const after = next[transition.completion.childId]
+		return (
+			beforeAction?.kind === "create_subtask" &&
+			beforeAction.actionId !== transition.completion.pendingActionId &&
+			after?.status === "completed" &&
+			canonicalTask(after.pendingAction) === canonicalTask(beforeAction)
 		)
 	},
 } satisfies Record<string, (context: WitnessContext) => boolean>
@@ -178,6 +200,17 @@ function transitions(state: ModelState): Transition[] {
 				next: replace(state, completed.parent, completed.child),
 				completion: { childId },
 			})
+			for (const actionId of actionIds) {
+				const completedChild: HistoryItem =
+					child.pendingAction?.actionId === actionId
+						? { ...completed.child, pendingAction: undefined }
+						: completed.child
+				result.push({
+					name: `complete(${childId}, ${actionId})`,
+					next: replace(state, completed.parent, completedChild),
+					completion: { childId, pendingActionId: actionId },
+				})
+			}
 		}
 
 		if (parent.status === "delegated" && parent.awaitingChildId === child.id && child.status === "interrupted") {
@@ -286,6 +319,19 @@ function checkTransitionInvariants(previous: ModelState, transition: Transition)
 			violations.push(
 				`${settlement.taskId}: settlement after ${transition.name} changed status, lineage, or accounting`,
 			)
+		}
+	}
+
+	const completion = transition.completion
+	if (completion) {
+		const beforeAction = previous[completion.childId]?.pendingAction
+		const afterAction = transition.next[completion.childId]?.pendingAction
+
+		if (afterAction && canonicalTask(afterAction) !== canonicalTask(beforeAction)) {
+			violations.push(`${completion.childId}: completion after ${transition.name} replaced a pending action`)
+		}
+		if (!afterAction && beforeAction && beforeAction.actionId !== completion.pendingActionId) {
+			violations.push(`${completion.childId}: completion after ${transition.name} cleared a non-matching action`)
 		}
 	}
 	return violations
@@ -409,5 +455,5 @@ function runRepresentativeScenarios(): void {
 runRepresentativeScenarios()
 const checkedStates = runModelCheck()
 console.log(
-	`Task lifecycle model check passed: ${checkedStates} reachable states, ${expectedActions.length}/${expectedActions.length} actions reachable, ${Object.keys(semanticLandmarks).length}/${Object.keys(semanticLandmarks).length} landmarks reached, ${Object.keys(semanticWitnesses).length}/${Object.keys(semanticWitnesses).length} settlement witnesses reached, depth <= ${MAX_DEPTH}, ${taskIds.length} task slots`,
+	`Task lifecycle model check passed: ${checkedStates} reachable states, ${expectedActions.length}/${expectedActions.length} actions reachable, ${Object.keys(semanticLandmarks).length}/${Object.keys(semanticLandmarks).length} landmarks reached, ${Object.keys(semanticWitnesses).length}/${Object.keys(semanticWitnesses).length} semantic witnesses reached, depth <= ${MAX_DEPTH}, ${taskIds.length} task slots`,
 )
