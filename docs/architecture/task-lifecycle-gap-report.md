@@ -241,7 +241,7 @@ The 40 IDs are not 40 independent projects. They group into eight programs with 
 - One request-generation/canonical-call identity established before parser indexing can support 008, 010, 024–026, 030, 037, and 038.
 - One correlated `(taskId, actionId, toolCallId)` approval protocol can close 036 and support 007/035; it does not itself make child state durable.
 - One typed lifecycle operation layer can normalize P6, but public compatibility requires separate adapters rather than a flag-day payload rewrite.
-- One validated-read and cycle-safe traversal guard closes 018 and 019.
+- Validated ordinary reads close 018. One shared filesystem task-ID validator covering traversal and separator cases across store paths, imports, deletion, and checkpoints closes 019.
 
 ### Independent work that should not be collapsed
 
@@ -299,21 +299,21 @@ Four workstreams can proceed concurrently after foundation decisions:
 
 ## Burn-down dependencies
 
-| Dependency                                     | Enables                                                       |
-| ---------------------------------------------- | ------------------------------------------------------------- | --- |
-| Disk-authoritative ownership/generation design | LIFE-GAP-001, 002, 012, 020                                   |
-| Durable operation intent/recovery design       | LIFE-GAP-004, 005, 006, 021, 023, 039, 040                    |
-| Task-local execution-context owner             | LIFE-GAP-007 and optional future fan-out                      |
-| Request generation and terminal cleanup owner  | LIFE-GAP-010, 024, 025, 026                                   |
-| Event notification/barrier contract            | LIFE-GAP-009, 011, 027, 028                                   |
-| Machine-readable lifecycle manifest            | LIFE-GAP-013, 016, 034                                        |
-| Serial scheduler baseline                      | LIFE-GAP-014                                                  |
-| Optional fan-out product program               | Historical #369/#372 scope, outside baseline                  |
-| Durable task-scoped child initialization       | LIFE-GAP-035 and future tool/lifecycle composition            |
-| Correlated approval ownership                  | LIFE-GAP-036                                                  |
-| Task/tool-call-scoped partial state            | LIFE-GAP-037 with request-generation cleanup gaps 010 and 024 |
-| Canonical tool-call identity                   | LIFE-GAP-038 with generation/replay gap 012                   |
-| Validated-read and traversal-guard design      | LIFE-GAP-018, 019                                             |     |
+| Dependency                                                           | Enables                                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------------------- | --- |
+| Disk-authoritative ownership/generation design                       | LIFE-GAP-001, 002, 012, 020                                   |
+| Durable operation intent/recovery design                             | LIFE-GAP-004, 005, 006, 021, 023, 039, 040                    |
+| Task-local execution-context owner                                   | LIFE-GAP-007 and optional future fan-out                      |
+| Request generation and terminal cleanup owner                        | LIFE-GAP-010, 024, 025, 026                                   |
+| Event notification/barrier contract                                  | LIFE-GAP-009, 011, 027, 028                                   |
+| Machine-readable lifecycle manifest                                  | LIFE-GAP-013, 016, 034                                        |
+| Serial scheduler baseline                                            | LIFE-GAP-014                                                  |
+| Optional fan-out product program                                     | Historical #369/#372 scope, outside baseline                  |
+| Durable task-scoped child initialization                             | LIFE-GAP-035 and future tool/lifecycle composition            |
+| Correlated approval ownership                                        | LIFE-GAP-036                                                  |
+| Task/tool-call-scoped partial state                                  | LIFE-GAP-037 with request-generation cleanup gaps 010 and 024 |
+| Canonical tool-call identity                                         | LIFE-GAP-038 with generation/replay gap 012                   |
+| Validated ordinary reads and one shared filesystem task-ID validator | LIFE-GAP-018, 019                                             |     |
 
 ## Mechanically useful follow-up checklist
 

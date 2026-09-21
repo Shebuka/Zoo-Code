@@ -1069,7 +1069,11 @@ export class TaskHistoryStore {
 	 * The authoritative record is written back, the store cache is refreshed
 	 * with it, and it is returned to the caller.
 	 *
-	 * @throws If the task ID is not present in the cache.
+	 * Deletion by another host is authoritative (#1726): when no persisted
+	 * record exists, the merge callback removes the stale cache entry and
+	 * throws instead of writing the cached record back to disk.
+	 *
+	 * @throws If the task ID is not present in the cache or no persisted record remains on disk.
 	 */
 	public async clearPendingActionIfMatching(taskId: string, expectedActionId: string): Promise<HistoryItem> {
 		return this.withLock(async () => {
@@ -1080,11 +1084,17 @@ export class TaskHistoryStore {
 			const filePath = await this.getTaskFilePath(taskId)
 			let authoritative: HistoryItem = cached
 			await safeWriteJson(filePath, cached, {
-				merge: (existing, incoming) => {
-					const disk =
-						existing && typeof existing === "object" && "id" in existing
-							? (existing as HistoryItem)
-							: (incoming as HistoryItem)
+				merge: (existing) => {
+					if (!existing || typeof existing !== "object" || !("id" in existing)) {
+						// Writing the cached record back would recreate a task
+						// another host deleted, so drop the stale entry first.
+						this.cache.delete(taskId)
+						this.taskFileMtimes.delete(taskId)
+						throw new Error(
+							`[TaskHistoryStore] clearPendingActionIfMatching: task ${taskId} not found in cache`,
+						)
+					}
+					const disk = existing as HistoryItem
 					const pendingAction = disk.pendingAction
 					authoritative =
 						pendingAction?.kind === "create_subtask" && pendingAction.actionId === expectedActionId

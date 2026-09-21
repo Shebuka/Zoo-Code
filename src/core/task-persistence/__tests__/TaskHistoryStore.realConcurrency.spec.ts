@@ -212,6 +212,33 @@ describe("TaskHistoryStore real cross-host locking", () => {
 		}
 	})
 
+	it("does not recreate a task deleted by another host before settlement", async () => {
+		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-deleted-settlement-"))
+		const storeA = new TaskHistoryStore(storagePath)
+		const storeB = new TaskHistoryStore(storagePath)
+		const actionA = createAction("action-a", "action A")
+
+		try {
+			await storeA.initialize()
+			await storeA.upsert({ ...item("shared-task"), pendingAction: actionA })
+			await storeB.initialize()
+
+			await storeB.delete("shared-task")
+			expect(storeA.get("shared-task")?.pendingAction).toEqual(actionA)
+
+			await expect(storeA.clearPendingActionIfMatching("shared-task", actionA.actionId)).rejects.toThrow(
+				"task shared-task not found",
+			)
+			expect(storeA.get("shared-task")).toBeUndefined()
+			await storeB.invalidate("shared-task")
+			expect(storeB.get("shared-task")).toBeUndefined()
+		} finally {
+			storeA.dispose()
+			storeB.dispose()
+			await fs.rm(storagePath, { recursive: true, force: true })
+		}
+	})
+
 	it("preserves independent stale-cache deltas through the real per-file lock", async () => {
 		const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "task-history-real-lock-"))
 		const storeA = new TaskHistoryStore(storagePath)
